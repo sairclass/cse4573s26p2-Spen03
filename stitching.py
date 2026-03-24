@@ -26,26 +26,12 @@ def stitch_background(imgs: Dict[str, torch.Tensor]):
     
     #TODO: Add your code here. Do not modify the return and input arguments.
     
-
-
-    # # mask out the people (artifacts in the foreground)
-
-    # # mask = torch.ones_like(img)
-    # # mask[:, :, region_with_person] = 0
-    # for i, im in enumerate(imgs):
-    #     print(f'image shape = {imgs[im].shape}')
-    #     if i == 0:
-    #         Lmask = imgs[im] 
-    #         Lmask[:, 60:210, 160:215] = 0 # [C, H, W]
-    #     show_image(Lmask)
-    #     if i == 1:
-    #         Rmask = imgs[im]
-    #         Rmask[:, 150:, 400:600] = 0
-    #     # show_image(Rmask)
-    #     # show_image(imgs[im])
-
-
+    # print(f'Cuda is available?: {torch.cuda.is_available()}')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    # I have an Intel GPU but not the right kind
+    # print(torch.xpu.is_available())  # torch.xpu is the API for Intel GPU support
+
 
 
     # make a new picture that is the cropped right half of image A. 
@@ -54,25 +40,12 @@ def stitch_background(imgs: Dict[str, torch.Tensor]):
             A_rh = imgs[im][:, :, 220:]
     imgs["A_rh"] = A_rh # append to the dicitonary of images. 
 
-    # # show images
-    # for im in imgs:
-    #     print(im)
-    #     show_image(imgs[im])
     
-
-    # make a list of the image tensors 
-    # and normalize to float32 values between 0 and 1
-    # and of shape [batch_size, color, height, width] for processing by the Neural Network:
-    
-    
-    
-    my_imgs = []
-    
+    my_imgs = []    
     for img_str in imgs:
         if img_str == "A_rh":
             continue # skip, to be appended as first picture
         
-
         img_tensor = imgs[img_str]
         # 0 is min, 255 is max, 
         # dividing by 255 normalizes values in that range to between 0 and 1
@@ -83,7 +56,7 @@ def stitch_background(imgs: Dict[str, torch.Tensor]):
     # my_imgs.reverse() # try reversing order to prefer the left image
     # make the first image A_rh:
     img_tensor = imgs["A_rh"].to(torch.float32) / 255.0
-    my_imgs = [img_tensor.unsqueeze(0)] + my_imgs # put the cropped picture first
+    my_imgs = [img_tensor.unsqueeze(0).to(device= device)] + my_imgs # put the cropped picture first
 
     # stitched images must have the same height.
     # I will resize all images uniformly so that they have the same height as the tallest height image
@@ -127,13 +100,18 @@ def panorama(imgs: Dict[str, torch.Tensor]):
     overlap = torch.empty((3, 256, 256)) # assumed empty 256*256 overlap. Update this as per your logic.
 
     #TODO: Add your code here. Do not modify the return and input arguments.
-
-    # print(f'imgs = {imgs}')
-
-    # for im in imgs:
-    #     print("in for loop")
-    #     print(f'im = {im}')
-    #     # show_image(imgs[im])
+    '''
+    Running on CPU for task2 t2 folder pics worked just fine,
+    But Bonus1 killed my computer. 
+    I'm going to try to load it to my GPU, but I don't know if I have a cuda available GPU
+    
+    '''
+    # torch.set_num_threads(4) # try limiting threads to reduce memory overhead
+    # send to gpu on compatable hardware
+    # unfortunately my PC does not have an NVIDIA GPU so I don't know if this works as intended
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+    
+ 
 
     '''
     Find overlap array by finding features and comparing them 
@@ -147,15 +125,6 @@ def panorama(imgs: Dict[str, torch.Tensor]):
     # find overlap matrix and usable images for the panorama
     overlap, usable_imgs_dict = get_overlap_matrix(img_dict= resized_img_dict)
     
-    '''
-    normalizing not necessary for LoFTR
-    '''
-    # make a list of usable image tensors normalized and with batch dimension
-    # my_imgs = []
-    # for img_str in usable_imgs_dict:
-    #     img_tensor = usable_imgs_dict[img_str]
-    #     my_imgs.append(img_tensor)
-
     # make a list of usable image tensors normalized and with batch dimension
     my_imgs = []
     for img_str in usable_imgs_dict:
@@ -165,7 +134,7 @@ def panorama(imgs: Dict[str, torch.Tensor]):
         img_tensor = img_tensor.to(torch.float32) / 255.0
         # my_imgs.append(img_tensor.unsqueeze(0))
         # usable_imgs already in ([B, C, W, H]) from resize_images_dict
-        my_imgs.append(img_tensor) 
+        my_imgs.append(img_tensor.to(device= device)) 
 
 
 
@@ -245,6 +214,29 @@ Adding A to ArB would yeild other missing details.
 '''
 
 
+
+
+
+def downscale_tensor(my_uniform_height_tensor, target_height=640):
+    # assume tensors have already been scaled to have the same height
+    # now scale their width to make them smaller to handle easier on my laptop without CUDA
+
+    # ([B, C, H, W])
+    _, _, H, W = my_uniform_height_tensor.shape
+    my_scale = target_height / H
+
+    F = torch.nn.functional
+    new_H = int(H * my_scale)
+    new_W = int(W * my_scale)
+    tensor = F.interpolate(my_uniform_height_tensor, 
+                           size=(new_H, new_W), 
+                           mode='bilinear', 
+                           align_corners=False)
+
+    return tensor
+
+
+
 def get_overlap_matrix(img_dict, found_feat_thresh=0.2):
     # images in img dict are all of size ([B, C, H, W])
     overlap = torch.zeros((len(img_dict), len(img_dict)))
@@ -252,50 +244,141 @@ def get_overlap_matrix(img_dict, found_feat_thresh=0.2):
     KF = K.feature
     matcher = KF.LoFTR(pretrained= "outdoor")
 
-    # img1 = K.image_to_tensor(np.array(Image.open(fname1).convert("RGB"))).float()[None, ...] / 255.0
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # img1 = K.image_to_tensor(np.array(Image.open(fname1).convert("RGB"))).float()[None, ...] / 255.0
+    '''
+    original attempt. works for t2, fails at Bonus1
+    '''
+    # for i, img_i_str in enumerate(img_dict): 
+    #     # convert to black and white
+    #     # and normalize values to float32 between 0 and 1
+    #     bw_i = K.color.bgr_to_grayscale(img_dict[img_i_str].float() / 255.0) 
+    #     # print(f'bw_i = {bw_i}')
+    #     # print(f'bw_i shape = {bw_i.shape}')
+    #     for j, img_j_str in enumerate(img_dict):
+    #         bw_j = K.color.bgr_to_grayscale(img_dict[img_j_str].float() / 255.0)
+    #         # print(f'bw_j = {bw_j}')
+    #         # print(f'bw_j shape = {bw_j.shape}')
+    
+
+    #     compare_dict = {
+    #         "image0" : img_dict[img_i_str], # always pass image0 and image1, no other names
+    #         "image1" : img_dict[img_j_str] # LoFTR only works on grayscale
+    #     }
+    #     with torch.no_grad():
+    #         matches = matcher(compare_dict)
+
+    #     match_confidence = matches["confidence"] # tensor of feature match confidence scores
+    #     # print(f'match_confidence.shape = {match_confidence.shape}')
+    #     # filter out low confidence scores
+    #     # find percentage of high confidence scores still left out of total features
+        
+    #     # extract number of features from the tensor
+    #     total_features = match_confidence.shape[0] 
+    #     # number of features that have a high confidence match
+    #     conf_thresh = 0.9
+    #     high_conf_matches = (match_confidence > conf_thresh).sum().item()
+
+    #     high_conf_percentage = high_conf_matches / total_features
+
+    #     # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
+
+    #     if high_conf_percentage >= found_feat_thresh:
+    #     # if torch.linalg.norm(match_confidence) >= conf_thresh:
+    #         overlap[i, j] = 1
+    '''
+    second attempt. optimized to make the overlap faster.
+    Shrinks images to reduce detail, and doesn't do redundant comparisions of features
+    '''
     for i, img_i_str in enumerate(img_dict): 
         # convert to black and white
         # and normalize values to float32 between 0 and 1
-        bw_i = K.color.bgr_to_grayscale(img_dict[img_i_str].float() / 255.0) 
+        resized_i = downscale_tensor(my_uniform_height_tensor= img_dict[img_i_str],
+                                     target_height= 160) # 240) # 320)
+        bw_i = K.color.bgr_to_grayscale(resized_i.float() / 255.0).to(device= device) 
         # print(f'bw_i = {bw_i}')
         # print(f'bw_i shape = {bw_i.shape}')
         for j, img_j_str in enumerate(img_dict):
-            bw_j = K.color.bgr_to_grayscale(img_dict[img_j_str].float() / 255.0)
+            resized_j = downscale_tensor(my_uniform_height_tensor= img_dict[img_j_str],
+                                         target_height= 160) # 240) # 320)
+            bw_j = K.color.bgr_to_grayscale(resized_j.float() / 255.0).to(device= device) 
             # print(f'bw_j = {bw_j}')
             # print(f'bw_j shape = {bw_j.shape}')
 
+            if j <= i: 
+                compare_dict = {
+                    "image0" : bw_i, # always pass image0 and image1, no other names
+                    "image1" : bw_j
+                }
+
+                with torch.no_grad():
+                    matches = matcher(compare_dict)
+
+                match_confidence = matches["confidence"] # tensor of feature match confidence scores
+                # print(f'match_confidence.shape = {match_confidence.shape}')
+                # filter out low confidence scores
+                # find percentage of high confidence scores still left out of total features
+                
+                # extract number of features from the tensor
+                total_features = match_confidence.shape[0] 
+                # number of features that have a high confidence match
+                conf_thresh = 0.9
+                high_conf_matches = (match_confidence > conf_thresh).sum().item()
+
+                high_conf_percentage = high_conf_matches / total_features
+
+                # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
+
+                if high_conf_percentage >= found_feat_thresh:
+                # only run LoFTR for j > i
+                # using the fact that i = j is symmetric, and [i, j] and [j, i] are symmetric
+                    overlap[i, j] = 1
+                    overlap[j, i] = 1
+    '''
+    third attempt. Does not have redundant comparisons of features, but keeps images the same size. 
+    '''
+    # for i, img_i_str in enumerate(img_dict): 
+    #     # convert to black and white
+    #     # and normalize values to float32 between 0 and 1
+    #     bw_i = K.color.bgr_to_grayscale(img_dict[img_i_str].float() / 255.0).to(device= device) 
+    #     # print(f'bw_i = {bw_i}')
+    #     # print(f'bw_i shape = {bw_i.shape}')
+    #     for j, img_j_str in enumerate(img_dict):
+    #         bw_j = K.color.bgr_to_grayscale(img_dict[img_j_str].float() / 255.0).to(device= device) 
+    #         # print(f'bw_j = {bw_j}')
+    #         # print(f'bw_j shape = {bw_j.shape}')
+
+    #         if j <= i: 
+    #             compare_dict = {
+    #                 "image0" : bw_i, # always pass image0 and image1, no other names
+    #                 "image1" : bw_j
+    #             }
+
+    #             with torch.no_grad():
+    #                 matches = matcher(compare_dict)
+
+    #             match_confidence = matches["confidence"] # tensor of feature match confidence scores
+    #             # print(f'match_confidence.shape = {match_confidence.shape}')
+    #             # filter out low confidence scores
+    #             # find percentage of high confidence scores still left out of total features
+                
+    #             # extract number of features from the tensor
+    #             total_features = match_confidence.shape[0] 
+    #             # number of features that have a high confidence match
+    #             conf_thresh = 0.9
+    #             high_conf_matches = (match_confidence > conf_thresh).sum().item()
+
+    #             high_conf_percentage = high_conf_matches / total_features
+
+    #             # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
+
+    #             if high_conf_percentage >= found_feat_thresh:
+    #             # only run LoFTR for j > i
+    #             # using the fact that i = j is symmetric, and [i, j] and [j, i] are symmetric
+    #                 overlap[i, j] = 1
+    #                 overlap[j, i] = 1         
             
-            compare_dict = {
-                "image0" : bw_i, # always pass image0 and image1, no other names
-                "image1" : bw_j
-            }
-
-            # compare_dict = {
-            #     "image0" : img_dict[img_i_str], # always pass image0 and image1, no other names
-            #     "image1" : img_dict[img_j_str] # LoFTR only works on grayscale
-            # }
-            with torch.no_grad():
-                matches = matcher(compare_dict)
-
-            match_confidence = matches["confidence"] # tensor of feature match confidence scores
-            # print(f'match_confidence.shape = {match_confidence.shape}')
-            # filter out low confidence scores
-            # find percentage of high confidence scores still left out of total features
-            
-            # extract number of features from the tensor
-            total_features = match_confidence.shape[0] 
-            # number of features that have a high confidence match
-            conf_thresh = 0.9
-            high_conf_matches = (match_confidence > conf_thresh).sum().item()
-
-            high_conf_percentage = high_conf_matches / total_features
-
-            # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
-
-            if high_conf_percentage >= found_feat_thresh:
-            # if torch.linalg.norm(match_confidence) >= conf_thresh:
-                overlap[i, j] = 1
 
 
 
