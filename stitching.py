@@ -246,47 +246,7 @@ def get_overlap_matrix(img_dict, found_feat_thresh=0.2):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # img1 = K.image_to_tensor(np.array(Image.open(fname1).convert("RGB"))).float()[None, ...] / 255.0
-    '''
-    original attempt. works for t2, fails at Bonus1
-    '''
-    # for i, img_i_str in enumerate(img_dict): 
-    #     # convert to black and white
-    #     # and normalize values to float32 between 0 and 1
-    #     bw_i = K.color.bgr_to_grayscale(img_dict[img_i_str].float() / 255.0) 
-    #     # print(f'bw_i = {bw_i}')
-    #     # print(f'bw_i shape = {bw_i.shape}')
-    #     for j, img_j_str in enumerate(img_dict):
-    #         bw_j = K.color.bgr_to_grayscale(img_dict[img_j_str].float() / 255.0)
-    #         # print(f'bw_j = {bw_j}')
-    #         # print(f'bw_j shape = {bw_j.shape}')
     
-
-    #     compare_dict = {
-    #         "image0" : img_dict[img_i_str], # always pass image0 and image1, no other names
-    #         "image1" : img_dict[img_j_str] # LoFTR only works on grayscale
-    #     }
-    #     with torch.no_grad():
-    #         matches = matcher(compare_dict)
-
-    #     match_confidence = matches["confidence"] # tensor of feature match confidence scores
-    #     # print(f'match_confidence.shape = {match_confidence.shape}')
-    #     # filter out low confidence scores
-    #     # find percentage of high confidence scores still left out of total features
-        
-    #     # extract number of features from the tensor
-    #     total_features = match_confidence.shape[0] 
-    #     # number of features that have a high confidence match
-    #     conf_thresh = 0.9
-    #     high_conf_matches = (match_confidence > conf_thresh).sum().item()
-
-    #     high_conf_percentage = high_conf_matches / total_features
-
-    #     # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
-
-    #     if high_conf_percentage >= found_feat_thresh:
-    #     # if torch.linalg.norm(match_confidence) >= conf_thresh:
-    #         overlap[i, j] = 1
     '''
     second attempt. optimized to make the overlap faster.
     Shrinks images to reduce detail, and doesn't do redundant comparisions of features
@@ -335,52 +295,7 @@ def get_overlap_matrix(img_dict, found_feat_thresh=0.2):
                 # using the fact that i = j is symmetric, and [i, j] and [j, i] are symmetric
                     overlap[i, j] = 1
                     overlap[j, i] = 1
-    '''
-    third attempt. Does not have redundant comparisons of features, but keeps images the same size. 
-    '''
-    # for i, img_i_str in enumerate(img_dict): 
-    #     # convert to black and white
-    #     # and normalize values to float32 between 0 and 1
-    #     bw_i = K.color.bgr_to_grayscale(img_dict[img_i_str].float() / 255.0).to(device= device) 
-    #     # print(f'bw_i = {bw_i}')
-    #     # print(f'bw_i shape = {bw_i.shape}')
-    #     for j, img_j_str in enumerate(img_dict):
-    #         bw_j = K.color.bgr_to_grayscale(img_dict[img_j_str].float() / 255.0).to(device= device) 
-    #         # print(f'bw_j = {bw_j}')
-    #         # print(f'bw_j shape = {bw_j.shape}')
-
-    #         if j <= i: 
-    #             compare_dict = {
-    #                 "image0" : bw_i, # always pass image0 and image1, no other names
-    #                 "image1" : bw_j
-    #             }
-
-    #             with torch.no_grad():
-    #                 matches = matcher(compare_dict)
-
-    #             match_confidence = matches["confidence"] # tensor of feature match confidence scores
-    #             # print(f'match_confidence.shape = {match_confidence.shape}')
-    #             # filter out low confidence scores
-    #             # find percentage of high confidence scores still left out of total features
-                
-    #             # extract number of features from the tensor
-    #             total_features = match_confidence.shape[0] 
-    #             # number of features that have a high confidence match
-    #             conf_thresh = 0.9
-    #             high_conf_matches = (match_confidence > conf_thresh).sum().item()
-
-    #             high_conf_percentage = high_conf_matches / total_features
-
-    #             # print(f'high_conf_percentage ({i}, {j}) = {high_conf_percentage}')
-
-    #             if high_conf_percentage >= found_feat_thresh:
-    #             # only run LoFTR for j > i
-    #             # using the fact that i = j is symmetric, and [i, j] and [j, i] are symmetric
-    #                 overlap[i, j] = 1
-    #                 overlap[j, i] = 1         
-            
-
-
+        
 
     '''
     # image 1 does not match with image two or three
